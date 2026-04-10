@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-<!-- ✅ 修复：使用标准 <link> 引入字体，彻底解决 @import 导致代码外泄的问题 -->
+<!-- ✅ 字体引入修复：使用标准 link 标签，避免 @import 导致文本外泄 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -21,8 +21,7 @@
   body {
     font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
     min-height: 100vh; display: flex; justify-content: center; align-items: center;
-    background: #f0f2f5; padding: 20px;
-    overflow: hidden;
+    background: #f0f2f5; padding: 20px; overflow: hidden;
   }
   .phone-frame {
     width: 390px; height: 844px; background: #000; border-radius: 50px; padding: 12px;
@@ -48,7 +47,7 @@
   .content::-webkit-scrollbar { display: none; }
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-top: 10px; }
   .header h1 { font-size: 26px; font-weight: 700; color: #1a1a2e; letter-spacing: -0.5px; }
-  .header-actions { display: flex; gap: 10px; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
   .icon-btn {
     width: 40px; height: 40px; border-radius: 14px; background: rgba(255,255,255,0.8); backdrop-filter: blur(10px);
     border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s ease; color: #1a1a2e;
@@ -56,6 +55,25 @@
   .icon-btn:hover { background: rgba(255,255,255,1); transform: scale(1.05); }
   .icon-btn:active { transform: scale(0.95); }
   .icon-btn svg { width: 20px; height: 20px; }
+  
+  /* ✅ PWA 安装按钮样式 */
+  #installBtn {
+    display: none;
+    padding: 8px 14px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+  #installBtn:hover { transform: scale(1.03); }
+  #installBtn:active { transform: scale(0.97); }
+
   .current-shift-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 24px; padding: 22px; color: white;
     margin-bottom: 20px; position: relative; overflow: hidden; box-shadow: 0 8px 32px rgba(102, 126, 234, 0.35);
@@ -188,6 +206,7 @@
     .screen { border-radius: 0; }
     .dynamic-island { display: none; }
     body { padding: 0; }
+    #installBtn { font-size: 12px; padding: 6px 10px; }
   }
 </style>
 </head>
@@ -210,11 +229,16 @@
       <div class="header">
         <div><h1>📋 排班助手</h1></div>
         <div class="header-actions">
+          <!-- ✅ PWA 安装按钮 -->
+          <button id="installBtn" onclick="installPWA()">📲 安装到桌面</button>
           <button class="icon-btn" onclick="openModal()" title="添加排班">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
           <button class="icon-btn" onclick="autoGenerate()" title="智能排班">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </button>
+          <button class="icon-btn" onclick="clearShifts()" title="清空排班" style="color:#e53935;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
       </div>
@@ -304,6 +328,7 @@
   let selectedDate = new Date();
   let shifts = {};
   let selectedType = 'early';
+  let deferredPrompt = null; // ✅ PWA 安装事件缓存
 
   const shiftConfig = {
     early: { name: '早班', icon: '🌅', time: '08:00 - 16:00', startHour: 8, endHour: 16 },
@@ -314,9 +339,10 @@
 
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
 
+  // ✅ 修复后的初始化：移除自动填充，保持初始干净状态
   function init() {
     loadShifts();
-    generateSampleShifts();
+    // generateSampleShifts(); // 已注释，避免抢占智能排班区间
     renderWeek();
     renderSchedule();
     updateCurrentShift();
@@ -334,18 +360,6 @@
 
   function saveShifts() {
     localStorage.setItem('hyperos_shifts', JSON.stringify(shifts));
-  }
-
-  function generateSampleShifts() {
-    if (Object.keys(shifts).length > 0) return;
-    const types = ['early', 'middle', 'late', 'off'];
-    const today = new Date();
-    for (let i = -7; i < 30; i++) {
-      const d = new Date(today); d.setDate(d.getDate() + i);
-      const key = formatDateKey(d);
-      if (!shifts[key]) shifts[key] = types[Math.floor(Math.random() * 3)];
-    }
-    saveShifts();
   }
 
   function formatDateKey(date) {
@@ -483,20 +497,65 @@
     closeModal(); showToast('✅ 排班已添加');
   }
 
+  // ✅ 修复后的智能排班逻辑
   function autoGenerate() {
-    const types = ['early', 'middle', 'late', 'off'], today = new Date(); let count = 0;
+    const types = ['early', 'middle', 'late', 'off'];
+    const today = new Date();
+    let count = 0;
+
     for (let i = 0; i < 30; i++) {
       const d = new Date(today); d.setDate(d.getDate() + i);
       const key = formatDateKey(d);
-      if (!shifts[key]) { shifts[key] = i % 4 === 3 ? 'off' : types[i % 3]; count++; }
+      
+      if (!shifts[key]) {
+        // 空白日期：按“做三休一”规则填充
+        shifts[key] = i % 4 === 3 ? 'off' : types[i % 3];
+        count++;
+      }
     }
-    saveShifts(); renderWeek(); renderSchedule(); updateCurrentShift(); updateStats();
-    showToast(`🤖 已智能生成 ${count} 天排班`);
+
+    saveShifts();
+    renderWeek(); renderSchedule(); updateCurrentShift(); updateStats();
+    
+    if (count > 0) {
+      showToast(`🤖 已智能生成 ${count} 天排班`);
+    } else {
+      showToast('📅 未来30天已有排班，无需重复生成');
+    }
+  }
+
+  // ✅ 新增：一键清空功能
+  function clearShifts() {
+    if (confirm('确定清空所有排班数据？此操作不可恢复。')) {
+      shifts = {};
+      localStorage.removeItem('hyperos_shifts');
+      renderWeek(); renderSchedule(); updateCurrentShift(); updateStats();
+      showToast('🗑️ 已清空所有排班');
+    }
   }
 
   function showToast(msg) {
     const toast = document.getElementById('toast'); toast.textContent = msg; toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  // ✅ PWA 安装逻辑
+  const installBtn = document.getElementById('installBtn');
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBtn.style.display = 'flex'; // 满足条件后显示按钮
+  });
+
+  async function installPWA() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      showToast('📲 已成功安装到桌面');
+      installBtn.style.display = 'none';
+    }
+    deferredPrompt = null;
   }
 
   init();
