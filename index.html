@@ -247,7 +247,7 @@
         <div><h1>📋 排班助手</h1></div>
         <div class="header-actions">
           <button id="installBtn" onclick="installPWA()">📲 安装</button>
-          <button class="icon-btn" onclick="openModal('shiftModal')" title="添加排班">
+          <button class="icon-btn" onclick="openShiftModal()" title="添加/修改排班">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
           <button class="icon-btn" onclick="openModal('patternModal')" title="智能排班">
@@ -305,7 +305,7 @@
       <div class="home-indicator"></div>
     </div>
 
-    <!-- ✅ 倒班方案选择弹窗 -->
+    <!-- 倒班方案选择弹窗 -->
     <div class="modal-overlay" id="patternModal" onclick="closeModalOutside(event)">
       <div class="modal-content">
         <div class="modal-handle"></div>
@@ -317,11 +317,11 @@
       </div>
     </div>
 
-    <!-- ✅ 手动添加排班弹窗 -->
+    <!-- 手动添加/修改排班弹窗 -->
     <div class="modal-overlay" id="shiftModal" onclick="closeModalOutside(event)">
       <div class="modal-content">
         <div class="modal-handle"></div>
-        <h3>✨ 添加排班</h3>
+        <h3 id="shiftModalTitle">✨ 添加排班</h3>
         <div class="form-group">
           <label>班次类型</label>
           <div class="shift-type-selector">
@@ -345,12 +345,12 @@
         </div>
         <div class="btn-row">
           <button class="btn btn-secondary" onclick="closeModal('shiftModal')">取消</button>
-          <button class="btn btn-primary" onclick="addShift()">添加排班</button>
+          <button class="btn btn-primary" onclick="addShift()">保存排班</button>
         </div>
       </div>
     </div>
 
-    <!-- ✅ 自定义倒班方案弹窗 -->
+    <!-- 自定义倒班方案弹窗 -->
     <div class="modal-overlay" id="customPatternModal" onclick="closeModalOutside(event)">
       <div class="modal-content">
         <div class="modal-handle"></div>
@@ -376,17 +376,17 @@
 <script>
   let currentWeekOffset = 0;
   let selectedDate = new Date();
-  let shifts = {};
+  let shifts = {}; // 结构升级: { "2024-04-09": { type: 'early', time: '08:00-16:00' } }
   let selectedType = 'early';
   let deferredPrompt = null;
   let customPatterns = [];
   let tempCustomCycle = ['early'];
 
   const shiftConfig = {
-    early: { name: '早班', icon: '🌅', time: '08:00 - 16:00', startHour: 8, endHour: 16 },
-    middle: { name: '中班', icon: '☀️', time: '14:00 - 22:00', startHour: 14, endHour: 22 },
-    late: { name: '晚班', icon: '🌙', time: '22:00 - 06:00', startHour: 22, endHour: 30 },
-    off: { name: '休息', icon: '😴', time: '全天休息', startHour: 0, endHour: 0 }
+    early: { name: '早班', icon: '🌅', time: '08:00 - 16:00' },
+    middle: { name: '中班', icon: '☀️', time: '14:00 - 22:00' },
+    late: { name: '晚班', icon: '🌙', time: '22:00 - 06:00' },
+    off: { name: '休息', icon: '😴', time: '全天休息' }
   };
 
   const SHIFT_PATTERNS = {
@@ -398,6 +398,23 @@
   };
 
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+
+  // ✅ 辅助：解析时间字符串为小时数 (支持跨天)
+  function parseTimeRange(timeStr) {
+    if (!timeStr || !timeStr.includes('-')) return { start: 0, end: 0, isOvernight: false };
+    const parts = timeStr.split('-').map(t => t.trim());
+    if (parts.length !== 2) return { start: 0, end: 0, isOvernight: false };
+    
+    const toHours = (t) => {
+      const [h, m] = t.split(':').map(Number);
+      return (h || 0) + (m || 0) / 60;
+    };
+    let start = toHours(parts[0]);
+    let end = toHours(parts[1]);
+    const isOvernight = end <= start;
+    if (isOvernight) end += 24;
+    return { start, end, isOvernight };
+  }
 
   function init() {
     loadShifts();
@@ -413,9 +430,20 @@
     document.getElementById('shiftDate').valueAsDate = new Date();
   }
 
+  // ✅ 兼容旧数据迁移
   function loadShifts() {
     const saved = localStorage.getItem('hyperos_shifts');
-    if (saved) shifts = JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      shifts = {};
+      for (const [key, val] of Object.entries(parsed)) {
+        if (typeof val === 'string') {
+          shifts[key] = { type: val, time: shiftConfig[val]?.time || '00:00 - 00:00' };
+        } else {
+          shifts[key] = val;
+        }
+      }
+    }
   }
   function saveShifts() { localStorage.setItem('hyperos_shifts', JSON.stringify(shifts)); }
 
@@ -457,14 +485,14 @@
 
     dates.forEach(date => {
       const key = formatDateKey(date);
-      const isToday = key === todayKey, isSelected = key === selectedKey, shift = shifts[key];
+      const isToday = key === todayKey, isSelected = key === selectedKey, shiftData = shifts[key];
       const div = document.createElement('div');
       div.className = `day-item${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}`;
       div.onclick = () => selectDay(date);
       div.innerHTML = `
         <span class="day-name">周${dayNames[date.getDay()]}</span>
         <span class="day-num">${date.getDate()}</span>
-        ${shift ? `<span class="shift-dot ${shift}"></span>` : ''}
+        ${shiftData ? `<span class="shift-dot ${shiftData.type}"></span>` : ''}
       `;
       container.appendChild(div);
     });
@@ -473,27 +501,36 @@
   function selectDay(date) { selectedDate = date; renderWeek(); renderSchedule(); }
   function changeWeek(dir) { currentWeekOffset += dir; renderWeek(); }
 
+  // ✅ 修复：渲染时优先使用保存的自定义时间
   function renderSchedule() {
-    const key = formatDateKey(selectedDate), shift = shifts[key];
+    const key = formatDateKey(selectedDate);
+    const shiftData = shifts[key];
     const container = document.getElementById('scheduleList');
-    if (!shift) {
+    if (!shiftData) {
       container.innerHTML = `<div style="text-align:center; padding:30px; color:#ccc;"><div style="font-size:40px; margin-bottom:10px;">📭</div><div style="font-size:14px;">暂无排班安排</div><div style="font-size:12px; margin-top:4px;">点击 + 添加或智能排班</div></div>`;
       return;
     }
-    const config = shiftConfig[shift], now = new Date(), isToday = key === formatDateKey(now);
+    const type = shiftData.type;
+    const timeStr = shiftData.time || shiftConfig[type]?.time || '全天';
+    const config = shiftConfig[type] || { name: type, icon: '📋' };
+    
+    const now = new Date(), isToday = key === formatDateKey(now);
     let statusText = isToday ? '今日' : selectedDate > now ? '待执行' : '已完成';
+    
+    const [startTime, endTime] = timeStr.includes('-') ? timeStr.split('-').map(t=>t.trim()) : [timeStr, ''];
     container.innerHTML = `
       <div class="schedule-item">
-        <div class="schedule-time-block"><span class="start-time">${config.time.split(' - ')[0]}</span><span class="end-time">${config.time.split(' - ')[1] || ''}</span></div>
-        <div class="schedule-divider ${shift}"></div>
-        <div class="schedule-info"><div class="title">${config.icon} ${config.name}</div><div class="subtitle">${config.time}</div></div>
-        <span class="schedule-status ${shift}">${statusText}</span>
+        <div class="schedule-time-block"><span class="start-time">${startTime}</span><span class="end-time">${endTime}</span></div>
+        <div class="schedule-divider ${type}"></div>
+        <div class="schedule-info"><div class="title">${config.icon} ${config.name}</div><div class="subtitle">${timeStr}</div></div>
+        <span class="schedule-status ${type}">${statusText}</span>
       </div>`;
   }
 
+  // ✅ 修复：进度条与当前卡片同步自定义时间
   function updateCurrentShift() {
-    const now = new Date(), key = formatDateKey(now), shift = shifts[key], card = document.getElementById('currentShiftCard');
-    if (!shift) {
+    const now = new Date(), key = formatDateKey(now), shiftData = shifts[key], card = document.getElementById('currentShiftCard');
+    if (!shiftData) {
       document.getElementById('currentShiftName').textContent = '😴 休息中';
       document.getElementById('currentShiftTime').textContent = '今日无排班';
       document.getElementById('shiftProgress').style.width = '0%';
@@ -501,25 +538,31 @@
       card.style.background = 'linear-gradient(135deg, #a8a8a8, #888)';
       return;
     }
-    const config = shiftConfig[shift];
+    const type = shiftData.type;
+    const timeStr = shiftData.time || shiftConfig[type]?.time;
+    const config = shiftConfig[type] || { name: type, icon: '📋' };
+
     document.getElementById('currentShiftName').textContent = config.name;
-    document.getElementById('currentShiftTime').textContent = config.time;
+    document.getElementById('currentShiftTime').textContent = timeStr;
+    
     const gradients = { early: 'linear-gradient(135deg, #4CAF50, #2E7D32)', middle: 'linear-gradient(135deg, #FF9800, #E65100)', late: 'linear-gradient(135deg, #2196F3, #1565C0)', off: 'linear-gradient(135deg, #9E9E9E, #616161)' };
-    card.style.background = gradients[shift];
-    if (shift !== 'off') {
+    card.style.background = gradients[type] || gradients.early;
+
+    if (type !== 'off' && timeStr) {
       const currentHour = now.getHours() + now.getMinutes() / 60;
-      let startH = config.startHour, endH = config.endHour, progress = 0;
-      if (endH > 24) {
-        progress = currentHour >= startH ? (currentHour - startH)/(endH - startH) : currentHour < (endH - 24) ? (currentHour + 24 - startH)/(endH - startH) : 0;
-      } else {
-        progress = currentHour >= startH && currentHour <= endH ? (currentHour - startH)/(endH - startH) : currentHour > endH ? 1 : 0;
+      const { start, end } = parseTimeRange(timeStr);
+      let progress = 0;
+      if (currentHour >= start && currentHour <= end) {
+        progress = (currentHour - start) / (end - start);
+      } else if (currentHour > end) {
+        progress = 1;
       }
       const pct = Math.min(100, Math.max(0, progress * 100));
       document.getElementById('shiftProgress').style.width = pct + '%';
       document.getElementById('shiftRemaining').textContent = `已进行 ${Math.round(pct)}%`;
     } else {
       document.getElementById('shiftProgress').style.width = '100%';
-      document.getElementById('shiftRemaining').textContent = '好好休息 💤';
+      document.getElementById('shiftRemaining').textContent = type === 'off' ? '好好休息 💤' : '未开始';
     }
   }
 
@@ -529,7 +572,8 @@
     for (let d = 1; d <= 31; d++) {
       const date = new Date(y, m, d); if (date.getMonth() !== m) break;
       const key = formatDateKey(date);
-      if (shifts[key] && counts.hasOwnProperty(shifts[key])) counts[shifts[key]]++;
+      const shiftData = shifts[key];
+      if (shiftData && counts.hasOwnProperty(shiftData.type)) counts[shiftData.type]++;
     }
     document.getElementById('statEarly').textContent = counts.early;
     document.getElementById('statMiddle').textContent = counts.middle;
@@ -542,6 +586,27 @@
     document.getElementById('statusTime').textContent = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   }
 
+  // ✅ 弹窗管理优化：打开排班弹窗时自动回填已保存数据
+  function openShiftModal() {
+    const key = formatDateKey(selectedDate);
+    const existing = shifts[key];
+    document.getElementById('shiftModalTitle').textContent = existing ? '✏️ 修改排班' : '✨ 添加排班';
+    document.getElementById('shiftDate').valueAsDate = selectedDate;
+    
+    if (existing) {
+      selectedType = existing.type;
+      document.getElementById('shiftTimeRange').value = existing.time || shiftConfig[existing.type]?.time || '';
+    } else {
+      selectedType = 'early';
+      document.getElementById('shiftTimeRange').value = shiftConfig.early.time;
+    }
+    document.querySelectorAll('.shift-type-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.type === selectedType);
+    });
+    document.getElementById('timeGroup').style.display = selectedType === 'off' ? 'none' : 'block';
+    openModal('shiftModal');
+  }
+
   function openModal(id) { document.getElementById(id).classList.add('active'); }
   function closeModal(id) { document.getElementById(id).classList.remove('active'); }
   function closeModalOutside(e) { 
@@ -551,20 +616,32 @@
   function selectType(btn) {
     document.querySelectorAll('.shift-type-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active'); selectedType = btn.dataset.type;
-    document.getElementById('shiftTimeRange').value = shiftConfig[selectedType].time;
+    const key = formatDateKey(selectedDate);
+    const existing = shifts[key];
+    // 如果已有自定义时间则保留，否则恢复默认
+    if (!existing || !existing.time) {
+      document.getElementById('shiftTimeRange').value = shiftConfig[selectedType].time;
+    }
     document.getElementById('timeGroup').style.display = selectedType === 'off' ? 'none' : 'block';
   }
 
+  // ✅ 修复：保存时同步存储 type 和 time
   function addShift() {
     const dateVal = document.getElementById('shiftDate').value;
     if (!dateVal) return;
-    shifts[dateVal] = selectedType; saveShifts();
+    const customTime = document.getElementById('shiftTimeRange').value.trim();
+    
+    shifts[dateVal] = {
+      type: selectedType,
+      time: customTime || shiftConfig[selectedType]?.time || '00:00 - 00:00'
+    };
+    saveShifts();
     selectedDate = new Date(dateVal + 'T00:00:00'); currentWeekOffset = 0;
     renderWeek(); renderSchedule(); updateCurrentShift(); updateStats();
-    closeModal('shiftModal'); showToast('✅ 排班已添加');
+    closeModal('shiftModal'); showToast('✅ 排班已保存');
   }
 
-  // ✅ 渲染方案卡片 (内置 + 自定义 + 添加按钮)
+  // ✅ 渲染方案卡片
   function renderPatternCards() {
     const grid = document.getElementById('patternGrid');
     grid.innerHTML = '';
@@ -591,7 +668,6 @@
       grid.appendChild(card);
     });
 
-    // 添加 "+" 卡片
     const addCard = document.createElement('div');
     addCard.className = 'pattern-card';
     addCard.style.borderStyle = 'dashed';
@@ -690,12 +766,15 @@
       const key = formatDateKey(d);
       
       if (!shifts[key]) {
+        let type;
         if (pattern.isRandom) {
           const isRest = Math.random() < 0.25;
-          shifts[key] = isRest ? 'off' : ['early', 'middle', 'late'][Math.floor(Math.random() * 3)];
+          type = isRest ? 'off' : ['early', 'middle', 'late'][Math.floor(Math.random() * 3)];
         } else {
-          shifts[key] = pattern.cycle[generatedIndex % cycleLen];
+          type = pattern.cycle[generatedIndex % cycleLen];
         }
+        // ✅ 智能排班也保存标准时间段
+        shifts[key] = { type: type, time: shiftConfig[type]?.time || '00:00 - 00:00' };
         generatedIndex++;
         count++;
       }
